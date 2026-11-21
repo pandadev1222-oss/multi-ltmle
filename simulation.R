@@ -4,7 +4,7 @@
 # learners. Driver script: run through run_simulation.sh (see README.md).                 #
 #                                                                                          #
 # Usage: Rscript simulation.R estimator cores use_SL [R] [target_times] [output_dir]       #
-#                             [replicates]                                                 #
+#                             [replicates] [cross.fit]                                     #
 #   estimator     "tmle" (Super Learner or GLM learners) or "tmle-lstm" (LSTM learners)    #
 #   cores         cores used within each replicate (forked workers)                       #
 #   use_SL        "tmle" only: TRUE = Super Learner, FALSE = GLM                           #
@@ -12,6 +12,9 @@
 #   target_times  "all" (t = 1..36) or a comma-separated list, e.g. "12,24,36"             #
 #   output_dir    directory for the per-replicate results (default ./outputs/YYYYMMDD)     #
 #   replicates    optional subset of replicates, e.g. "1:25" or "7"                        #
+#   cross.fit     "tmle-lstm" only: number of cross-fitting folds K (default 0 = off; K >= 2 #
+#                 fits the LSTM nuisance models on K - 1 folds and predicts the held-out    #
+#                 fold, folds by subject seeded by the replicate number)                   #
 # Each replicate r is saved as its own .rds file in output_dir by simLong(); replicates   #
 # already saved there are skipped, so an interrupted run resumes where it stopped.        #
 ############################################################################################
@@ -37,6 +40,9 @@ replicates <- if (grepl(":", replicates)) {
 } else {
   as.integer(strsplit(replicates, ",")[[1]])
 }
+cross.fit <- as.integer(arg_or(8, 0)) # cross-fitting folds of the LSTM nuisance models (0 = off)
+if (cross.fit == 1 || cross.fit < 0) stop("cross.fit must be 0 (off) or at least 2")
+if (cross.fit > 1 && estimator != "tmle-lstm") stop("cross.fit requires estimator 'tmle-lstm'")
 scale.continuous <- FALSE # continuous covariates are not standardized
 gbound <- c(0.05, 1) # bound for the treatment density ratio (as 1/20) and censoring probabilities
 ybound <- c(0.0001, 0.9999) # bounds for the outcome predictions
@@ -90,6 +96,7 @@ for (r in to_run) {
   tryCatch(simLong(r = r, Dset = Dset, output_dir = output_dir, J = J, n = n, t.end = t.end,
                    gbound = gbound, ybound = ybound, n.folds = n.folds, cores = cores,
                    estimator = estimator, treatment.rule = treatment.rule, use.SL = use.SL,
-                   scale.continuous = scale.continuous, target.times = target.times),
+                   scale.continuous = scale.continuous, target.times = target.times,
+                   cross.fit = cross.fit),
            error = function(e) message("Replicate ", r, " failed: ", conditionMessage(e)))
 }

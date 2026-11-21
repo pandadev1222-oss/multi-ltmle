@@ -92,6 +92,13 @@ replicate, use SL (`TRUE`; `FALSE` uses GLM / multinomial logistic regression, `
 number of replicates R, target times (`all` = 1..36, or a comma-separated list), output
 directory, and optionally a subset of replicates (e.g. `1:25` or `7`).
 
+Optional cross-fitting of the LSTM nuisance models (treatment, censoring and outcome regressions):
+add the number of folds K as the last argument, e.g.
+`./run_simulation.sh tmle-lstm 3 TRUE 100 "12,24,36" ./outputs/rnn_crossfit 1:25 3`. The subjects
+are split into K folds (seeded by the replicate number); each model is fitted on K - 1 folds and
+predicts the held-out fold, so the influence-curve standard errors use out-of-fold predictions.
+The default (0) is the original procedure.
+
 Each replicate r is saved as its own `.rds` file in the output directory. A run that is
 interrupted resumes where it stopped (replicates already saved are skipped), and disjoint
 ranges of replicates can run as separate processes writing to the same directory.

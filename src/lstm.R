@@ -83,7 +83,8 @@ lstm_set_data <- function(dat, spec, J = 6) {
   mods <- lstm_modules(spec)
   if (!identical(lstm_env$data_token, spec$data_token)) {
     arr <- lstm_arrays(dat, spec$K)
-    mods$utils$set_data(spec$data_token, arr$base, arr$A, arr$C, arr$at_risk, as.integer(J))
+    mods$utils$set_data(spec$data_token, arr$base, arr$A, arr$C, arr$at_risk, as.integer(J),
+                         as.integer(spec$cf_folds), as.integer(spec$cf_seed))
     lstm_env$data_token <- spec$data_token
   }
   mods

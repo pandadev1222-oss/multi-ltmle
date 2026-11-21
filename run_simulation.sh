@@ -1,6 +1,7 @@
 #!/bin/bash
 # Runs the simulation study (simulation.R); see README.md.
 # Usage: ./run_simulation.sh estimator cores use_sl [R] [target_times] [output_dir] [replicates]
+#                            [cross_fit]
 #   estimator:    'tmle' (Super Learner / GLM learners) or 'tmle-lstm' (LSTM learners);
 #                 both use the same LTMLE core
 #   cores:        cores used within each replicate (forked workers; for 'tmle-lstm' each runs
@@ -10,6 +11,8 @@
 #                 are skipped, so an interrupted run resumes where it stopped
 #   target_times: 'all' (t = 1..36) or a comma-separated list, e.g. '12,24,36'
 #   output_dir:   directory for the per-replicate results (default ./outputs/YYYYMMDD)
+#   cross_fit:    'tmle-lstm' only: K > 1 cross-fits the LSTM nuisance models over K folds of
+#                 subjects (default 0 = off, the original procedure)
 #   replicates:   optional subset of replicates, e.g. '1:25' or '7', to run disjoint ranges in
 #                 parallel processes or to re-run a single replicate (spot check)
 
@@ -20,6 +23,7 @@ R=${4:-100}
 TARGET_TIMES=${5:-"all"}
 OUTPUT_DIR=${6:-"./outputs/$(date +%Y%m%d)"}
 REPLICATES=${7:-""}
+CROSS_FIT=${8:-0}
 
 # Increase stack size to prevent C stack overflow (ignored if not permitted)
 ulimit -s unlimited 2>/dev/null || true
@@ -32,4 +36,4 @@ fi
 echo "Running simulation with: estimator=$ESTIMATOR, cores=$CORES, use_SL=$USE_SL, R=$R," \
   "target_times=$TARGET_TIMES, output_dir=$OUTPUT_DIR, replicates=${REPLICATES:-1:$R}"
 Rscript simulation.R "$ESTIMATOR" "$CORES" "$USE_SL" "$R" "$TARGET_TIMES" "$OUTPUT_DIR" \
-  "$REPLICATES"
+  "$REPLICATES" "$CROSS_FIT"

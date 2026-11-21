@@ -23,6 +23,8 @@
 #   use.SL            "tmle" only: TRUE = Super Learner, FALSE = GLM / multinomial regression
 #   scale.continuous  label in the results file name (continuous covariates are not scaled)
 #   target.times      months t at which psi_t is estimated (default 1..t.end)
+#   cross.fit         "tmle-lstm" only: K > 1 cross-fits the LSTM nuisance models over K folds of
+#                     subjects (seeded by r); 0 = off (the original procedure)
 # Output: list with the data frames `metrics` (estimate, SE, truth, bias, coverage and CI width
 #   per estimator, rule and target time) and `positivity`, fit failures, timings and settings.
 #   The list is also saved to output_dir as longitudinal_simulation_results_estimator_
@@ -31,7 +33,7 @@
 simLong <- function(r, Dset, output_dir, J = 6, n = 10000, t.end = 36, gbound = c(0.05, 1),
                     ybound = c(0.0001, 0.9999), n.folds = 3, cores = 1, estimator = "tmle",
                     treatment.rule = "all", use.SL = TRUE, scale.continuous = FALSE,
-                    target.times = NULL) {
+                    target.times = NULL, cross.fit = 0) {
   start_time <- Sys.time()
   if (J != 6) stop("J must be 6")
   if (t.end < 4 || t.end > 36) stop("t.end must be at least 4 and no more than 36")
@@ -61,7 +63,8 @@ simLong <- function(r, Dset, output_dir, J = 6, n = 10000, t.end = 36, gbound = 
     # so the parent never initialises TF before forking; with cores = 1 everything runs
     # in-process.
     rnn_spec <- list(learner = "rnn", use_sl = FALSE, n.folds = n.folds, K = K,
-                     data_token = paste0("r", r, "_n", n), threads = 1, seed = r * 1000, hp = NULL)
+                     data_token = paste0("r", r, "_n", n), threads = 1, seed = r * 1000, hp = NULL,
+                     cf_folds = cross.fit, cf_seed = r)
     rnn_seed <- function(offset) modifyList(rnn_spec, list(seed = r * 1000 + offset))
     g_tasks <- list(
       multinomial = function() fit_treatment_models(Odat, K, arm = "multinomial", J = J,
@@ -190,7 +193,7 @@ simLong <- function(r, Dset, output_dir, J = 6, n = 10000, t.end = 36, gbound = 
                 jobs_failed = sum(sapply(fits, is.null)))
   elapsed_time <- difftime(Sys.time(), start_time, units = "mins")
   iteration_results <- list("iteration" = r, "estimator" = estimator, "n" = n, "J" = J,
-                            "t.end" = t.end, "n_folds" = n.folds, "use_SL" = use.SL,
+                            "t.end" = t.end, "n_folds" = n.folds, "cross_fit" = cross.fit, "use_SL" = use.SL,
                             "gbound" = gbound, "ybound" = ybound, "target_times" = target.times,
                             "metrics" = metrics, "positivity" = positivity, "failures" = failures,
                             "truth_mc_se" = truth$mc_se[target.times, rules],
