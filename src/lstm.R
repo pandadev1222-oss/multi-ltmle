@@ -43,6 +43,15 @@ lstm_modules <- function(spec) {
   lstm_env$mods
 }
 
+# Start a task from a clean LSTM state, as in a freshly forked worker. Used when the tasks of a
+# replicate run one after another in one process (cores = 1, e.g. on Windows, which cannot fork).
+lstm_reset <- function() {
+  if (!is.null(lstm_env$mods)) lstm_env$mods$utils$reset_state()
+  lstm_env$data_token <- NULL
+  lstm_env$seed <- NULL
+  invisible(TRUE)
+}
+
 # dat: wide simulated data (simcausal); K: last time point; t.end: follow-up length.
 # Returns per-subject arrays (n x T x F, T = K + 1) of the inputs used by all LSTM learners:
 # V1 one-hot (3), V2 one-hot (2), V3 (median/IQR scaled), log1p(L1_t), L2_t, L3_t, t / t.end.
