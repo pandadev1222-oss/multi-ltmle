@@ -77,33 +77,56 @@ def _censoring_inputs():
     return np.concatenate([base_no_age, utils.lagged(d["A_onehot"]), d["A_onehot"]], axis=-1)
 
 
+def _fold_key(k):
+    """Extra seed key of cross-fitting fold k (empty without cross-fitting, so the seeds, and
+    hence the results, of the original procedure are unchanged)."""
+    return () if k is None else (int(k),)
+
+
+def _cross_fit_splits(w):
+    """Yield (fold, weights, training rows, rows to predict) for one nuisance model. Without
+    cross-fitting: one split, fitted and predicted on all subjects. With K-fold cross-fitting
+    (STATE["data"]["K"] > 1): for each fold k, the weights of fold k are set to zero, the model is
+    fitted on the other K - 1 folds and predicts the subjects of fold k."""
+    d = STATE["data"]
+    if d["K"] <= 1:
+        yield None, w, np.where(w.sum(axis=1) > 0)[0], slice(None)
+        return
+    for k in range(d["K"]):
+        held = np.where(d["fold"] == k)[0]
+        wk = w.copy()
+        wk[held] = 0.0
+        yield k, wk, np.where(wk.sum(axis=1) > 0)[0], held
+
+
 def fit_treatment(arm="multinomial"):
     """Returns (probs (n, T, J), epochs) with probabilities at every subject and time."""
     d = STATE["data"]
     J = d["J"]
     x = _treatment_inputs()
-    w = d["at_risk"]
-    rows = np.where(w.sum(axis=1) > 0)[0]
     n, T, F = x.shape
     epochs = []
-    if arm == "multinomial":
-        y = d["A_onehot"]
-        freq = (y * w[..., None]).sum(axis=(0, 1)) / max(w.sum(), 1.0)
-        utils.set_seed(utils.sub_seed("treatment", arm))
-        model = utils.build_sequence_model(T, F, J, "softmax", out_bias=np.log(freq + 1e-6))
-        epochs.append(_fit(model, x, y, w, rows, utils.sub_seed("split", "treatment"),
-                           HP["seq_max_epochs"], HP["seq_patience"]))
-        probs = test_lstm.predict_sequence(model, x)
-    else:
-        probs = np.zeros((n, T, J), dtype="float32")
-        for j in range(J):
-            y = d["A_onehot"][..., j:j + 1]
-            p = float((y[..., 0] * w).sum() / max(w.sum(), 1.0))
-            utils.set_seed(utils.sub_seed("treatment", arm, j))
-            model = utils.build_sequence_model(T, F, 1, "sigmoid", out_bias=[utils.logit(p)])
-            epochs.append(_fit(model, x, y, w, rows, utils.sub_seed("split", "treatment"),
+    probs = np.zeros((n, T, J), dtype="float32")
+    for k, w, rows, held in _cross_fit_splits(d["at_risk"]):
+        ks = _fold_key(k)
+        if arm == "multinomial":
+            y = d["A_onehot"]
+            freq = (y * w[..., None]).sum(axis=(0, 1)) / max(w.sum(), 1.0)
+            utils.set_seed(utils.sub_seed("treatment", arm, *ks))
+            model = utils.build_sequence_model(T, F, J, "softmax", out_bias=np.log(freq + 1e-6))
+            epochs.append(_fit(model, x, y, w, rows, utils.sub_seed("split", "treatment", *ks),
                                HP["seq_max_epochs"], HP["seq_patience"]))
-            probs[..., j] = test_lstm.predict_sequence(model, x)[..., 0]
+            probs[held] = test_lstm.predict_sequence(model, x[held])
+        else:
+            for j in range(J):
+                y = d["A_onehot"][..., j:j + 1]
+                p = float((y[..., 0] * w).sum() / max(w.sum(), 1.0))
+                utils.set_seed(utils.sub_seed("treatment", arm, j, *ks))
+                model = utils.build_sequence_model(T, F, 1, "sigmoid", out_bias=[utils.logit(p)])
+                epochs.append(_fit(model, x, y, w, rows,
+                                   utils.sub_seed("split", "treatment", *ks),
+                                   HP["seq_max_epochs"], HP["seq_patience"]))
+                probs[held, :, j] = test_lstm.predict_sequence(model, x[held])[..., 0]
     return probs, np.asarray(epochs, dtype="int32")
 
 
@@ -111,17 +134,21 @@ def fit_censoring():
     """Returns (P(C_t = 0) (n, T), epochs); t = 0 is not modelled (no censoring at baseline)."""
     d = STATE["data"]
     x = _censoring_inputs()
-    w = d["at_risk"].copy()
-    w[:, 0] = 0.0
+    w0 = d["at_risk"].copy()
+    w0[:, 0] = 0.0
     y = (d["C"] == 0).astype("float32")[..., None]
-    rows = np.where(w.sum(axis=1) > 0)[0]
     n, T, F = x.shape
-    p = float((y[..., 0] * w).sum() / max(w.sum(), 1.0))
-    utils.set_seed(utils.sub_seed("censoring"))
-    model = utils.build_sequence_model(T, F, 1, "sigmoid", out_bias=[utils.logit(p)])
-    ep = _fit(model, x, y, w, rows, utils.sub_seed("split", "censoring"), HP["seq_max_epochs"],
-              HP["seq_patience"])
-    return test_lstm.predict_sequence(model, x)[..., 0], np.asarray([ep], dtype="int32")
+    probs = np.zeros((n, T), dtype="float32")
+    epochs = []
+    for k, w, rows, held in _cross_fit_splits(w0):
+        ks = _fold_key(k)
+        p = float((y[..., 0] * w).sum() / max(w.sum(), 1.0))
+        utils.set_seed(utils.sub_seed("censoring", *ks))
+        model = utils.build_sequence_model(T, F, 1, "sigmoid", out_bias=[utils.logit(p)])
+        epochs.append(_fit(model, x, y, w, rows, utils.sub_seed("split", "censoring", *ks),
+                           HP["seq_max_epochs"], HP["seq_patience"]))
+        probs[held] = test_lstm.predict_sequence(model, x[held])[..., 0]
+    return probs, np.asarray(epochs, dtype="int32")
 
 
 def _calibrate_intercept(model, x, z, iters=25):
@@ -163,7 +190,20 @@ def fit_outcome_step(key, fallback_key, s, rows, z):
     """Fit the ICE regression of z on history ending at s among subjects `rows` (0-based).
     Warm-starts from the last fit stored under `key` (or `fallback_key`); identical fits
     (same s, rows and z, e.g. the first step Z = Y_t shared by all rules) are reused.
+    With K-fold cross-fitting, K models are fitted (model k on the subjects of `rows` outside
+    fold k, each warm-started from its own previous step) and stored under `key`|k.
     Returns the number of epochs run (0 if reused)."""
+    K = STATE["data"]["K"]
+    if K <= 1:
+        return _fit_outcome_one(key, fallback_key, s, rows, z, None)
+    rows = np.asarray(rows, dtype="int64")
+    z = np.asarray(z, dtype="float32")
+    fold = STATE["data"]["fold"][rows]
+    return sum(_fit_outcome_one("%s|cf%d" % (key, k), "%s|cf%d" % (fallback_key, k), s,
+                                rows[fold != k], z[fold != k], k) for k in range(K))
+
+
+def _fit_outcome_one(key, fallback_key, s, rows, z, k):
     s = int(s)
     rows = np.asarray(rows, dtype="int64")
     z = np.asarray(z, dtype="float32")
@@ -186,7 +226,7 @@ def fit_outcome_step(key, fallback_key, s, rows, z):
     x = test_lstm.outcome_window(s, rows)
     y = z[:, None]
     wt = np.ones(len(rows), dtype="float32")
-    utils.set_seed(utils.sub_seed("outcome_fit", key, s))
+    utils.set_seed(utils.sub_seed("outcome_fit", key, s))  # key carries the fold under cross-fitting
     idx = np.arange(len(rows))
     _calibrate_intercept(model, x, z)  # warm start: move to the level of the new pseudo-outcome
     ep = _fit(model, x, y, wt, idx, utils.sub_seed("split", key, s), max_epochs, patience)
@@ -196,7 +236,7 @@ def fit_outcome_step(key, fallback_key, s, rows, z):
     STATE["warm"][key] = weights
     STATE["fit_cache"][cache_key] = weights
     STATE["fit_cache_order"].append(cache_key)
-    while len(STATE["fit_cache_order"]) > 16:
+    while len(STATE["fit_cache_order"]) > 16 * max(STATE["data"]["K"], 1):
         STATE["fit_cache"].pop(STATE["fit_cache_order"].pop(0), None)
     STATE["n_fits"] += 1
     return ep

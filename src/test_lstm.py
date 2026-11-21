@@ -41,6 +41,20 @@ def outcome_window(s, rows, a_override=None):
 def predict_outcome_step(key, s, rows, a_override=None):
     import train_lstm
     model = train_lstm.outcome_model()
-    model.set_weights(STATE["warm"][key])
-    x = outcome_window(s, rows, a_override)
-    return utils.predict_in_chunks(model, x)[:, 0]
+    rows = np.asarray(rows, dtype="int64")
+    K = STATE["data"]["K"]
+    if K <= 1:
+        model.set_weights(STATE["warm"][key])
+        x = outcome_window(s, rows, a_override)
+        return utils.predict_in_chunks(model, x)[:, 0]
+    # cross-fitting: each subject is predicted by the model that did not use its fold
+    out = np.zeros(len(rows), dtype="float32")
+    fold = STATE["data"]["fold"][rows]
+    a_override = None if a_override is None else np.asarray(a_override).reshape(-1)
+    for k in range(K):
+        m = fold == k
+        if m.any():
+            model.set_weights(STATE["warm"]["%s|cf%d" % (key, k)])
+            x = outcome_window(s, rows[m], None if a_override is None else a_override[m])
+            out[m] = utils.predict_in_chunks(model, x)[:, 0]
+    return out

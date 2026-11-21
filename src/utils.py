@@ -105,8 +105,17 @@ def sub_seed(*keys):
     return int(h[:8], 16)
 
 
-def set_data(token, base, A, C, at_risk, J=6):
-    """Store one replicate's arrays (once per process and replicate)."""
+def make_folds(n, K, seed):
+    """Cross-fitting folds: a random, balanced assignment of the n subjects to K folds (0..K-1),
+    seeded by the replicate number. K <= 1 means no cross-fitting."""
+    if K <= 1:
+        return np.zeros(n, dtype="int32")
+    return (np.random.default_rng(int(seed)).permutation(n) % int(K)).astype("int32")
+
+
+def set_data(token, base, A, C, at_risk, J=6, cf_folds=0, cf_seed=0):
+    """Store one replicate's arrays (once per process and replicate). cf_folds = K > 1 turns on
+    K-fold cross-fitting of the nuisance models (folds by subject, seeded by cf_seed)."""
     if STATE["data_token"] == token:
         return False
     base = np.asarray(base, dtype="float32")
@@ -118,6 +127,8 @@ def set_data(token, base, A, C, at_risk, J=6):
         "at_risk": np.asarray(at_risk).astype("float32"),
         "A_onehot": onehot(A, J),
         "J": int(J),
+        "K": int(cf_folds),
+        "fold": make_folds(base.shape[0], int(cf_folds), cf_seed),
     }
     STATE["data_token"] = token
     STATE["outcome_model"] = None
