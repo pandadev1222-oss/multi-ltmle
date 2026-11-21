@@ -64,7 +64,8 @@ if (estimator == "tmle-lstm") {
   # only inside the (forked) workers that fit the LSTMs.
   suppressPackageStartupMessages(library(reticulate))
   source(file.path("src", "lstm.R"))
-  lstm_python(file.path(".", "myenv", "bin", "python"))
+  lstm_python(if (.Platform$OS.type == "windows") file.path(".", "myenv", "python.exe") else
+            file.path(".", "myenv", "bin", "python"))
 }
 writeLines(capture.output(sessionInfo()), file.path(output_dir, "session_info.txt"))
 

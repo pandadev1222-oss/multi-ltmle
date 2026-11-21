@@ -128,6 +128,14 @@ def set_data(token, base, A, C, at_risk, J=6):
     return True
 
 
+def reset_state():
+    """Forget the replicate data, warm-start weights and fit cache of this process (used when
+    tasks run one after another in one process instead of in fresh forked workers)."""
+    STATE.update({"data_token": None, "data": None, "outcome_model": None,
+                  "outcome_init_weights": None, "warm": {}, "fit_cache": {},
+                  "fit_cache_order": [], "n_fits": 0, "n_cached": 0})
+
+
 def onehot(A, J=6):
     """One-hot encode treatments 1..J; 0 (unobserved) maps to all zeros."""
     A = np.asarray(A).astype("int32")

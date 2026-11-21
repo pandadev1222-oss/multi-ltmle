@@ -73,7 +73,7 @@ simLong <- function(r, Dset, output_dir, J = 6, n = 10000, t.end = 36, gbound = 
       parallel::mclapply(g_tasks, function(f) f(), mc.cores = min(cores, 3),
                          mc.preschedule = FALSE)
     } else {
-      lapply(g_tasks, function(f) f())
+      lapply(g_tasks, function(f) { lstm_reset(); f() })
     }
     crashed <- sapply(g_fits, inherits, "try-error")
     if (any(crashed)) stop("LSTM nuisance fit crashed: ", g_fits[crashed][[1]])
@@ -102,6 +102,7 @@ simLong <- function(r, Dset, output_dir, J = 6, n = 10000, t.end = 36, gbound = 
                       stringsAsFactors = FALSE)
   run_job <- function(j) {
     arm <- jobs$arm[j]
+    if (estimator == "tmle-lstm") lstm_reset() # clean state, as in a forked worker
     Q_spec_j <- modifyList(Q_spec, list(arm = arm, seed = r * 1000 + j))
     tryCatch(getTMLELong(Q_spec_j, rules, ltmle_design,
                          if (arm == "multinomial") g_multi$g else g_bin$g, g_C$gC, Odat,
